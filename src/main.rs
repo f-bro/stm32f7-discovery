@@ -58,7 +58,7 @@ fn main(hw: board::Hardware) -> ! {
     assert_eq!(x[3], 4);
 
     let board::Hardware {
-        rcc,
+        mut rcc,
         pwr,
         flash,
         fmc,
@@ -79,6 +79,9 @@ fn main(hw: board::Hardware) -> ! {
         syscfg,
         ethernet_mac,
         ethernet_dma,
+        tim6,
+        tim7,
+        nvic,
         ..
     } = hw;
 
@@ -138,6 +141,38 @@ fn main(hw: board::Hardware) -> ! {
     layer_1.clear();
     layer_2.clear();
     lcd::init_stdout(layer_2);
+
+
+    use stm32f7::interrupts::{InterruptHandler, Priority};
+    use stm32f7::interrupts::interrupt_request::InterruptRequest;
+
+    let mut interrupt_handler = InterruptHandler::new(nvic, |irq| println!("Default Handler {}", irq));
+
+    let tim6_addr = (tim6 as * const ::board::tim6::Tim6) as u32;
+    interrupt_handler.register_isr(InterruptRequest::Tim6Dac, Priority::P3, move || {
+            println!("Tim6 Interrupt: Every 10s");
+
+            // TODO: reset the UIF flag in a save way!
+            unsafe {::core::ptr::write_volatile((tim6_addr  + 0x10) as *mut u16, 0);}
+        });
+    
+    let tim7_addr = (tim7 as * const ::board::tim7::Tim7) as u32;
+    interrupt_handler.register_isr(InterruptRequest::Tim7, Priority::P4, move || {
+            println!("Tim7 interrupt: Every 23s");
+            // TODO: reset the UIF flag in a save way!
+            unsafe {::core::ptr::write_volatile((tim7_addr  + 0x10) as * mut u16, 0);}
+        });
+    
+    use stm32f7::basic_timer::{BasicTimer, BasicTimers};
+    let mut timer6 = BasicTimer::new_with_interrupt(tim6, &mut rcc, BasicTimers::Tim6);
+    timer6.set_timeout_in_ms(10_000);
+
+    let mut timer7 = BasicTimer::new_with_interrupt(tim7, &mut rcc, BasicTimers::Tim7);
+    timer7.set_timeout_in_ms(23_000);
+    
+    hprintln!("Start timers");
+    timer6.resume();
+    timer7.resume();
 
     // i2c
     i2c::init_pins_and_clocks(rcc, &mut gpio);
