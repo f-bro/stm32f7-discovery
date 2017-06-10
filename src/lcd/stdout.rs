@@ -27,11 +27,18 @@ macro_rules! print {
 
 pub fn print(args: fmt::Arguments) {
     use core::fmt::Write;
-    if let Some(ref mut stdout) = *STDOUT.lock() {
-        stdout.write_fmt(args).unwrap();
-    } else {
-        panic!("stdout uninitialized")
+    
+    // TODO: best fix?
+    unsafe {
+        ::cortex_m::interrupt::free(|| {
+                if let Some(ref mut stdout) = *STDOUT.lock() {
+                stdout.write_fmt(args).unwrap();
+            } else {
+                panic!("stdout uninitialized")
+            }
+        });
     }
+    
 }
 
 pub fn with_stdout<F>(f: F) where F: FnOnce(&mut Option<TextWriter<FramebufferAl88>>) {
