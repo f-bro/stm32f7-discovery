@@ -25,12 +25,13 @@ const LAYER_2_LENGTH: usize = HEIGHT * WIDTH * LAYER_2_OCTETS_PER_PIXEL;
 
 const SDRAM_START: usize = 0xC000_0000;
 const LAYER_1_START: usize = SDRAM_START;
-const LAYER_2_START: usize = SDRAM_START + LAYER_1_LENGTH;
+const LAYER_1_BUF2_START: usize = SDRAM_START + LAYER_1_LENGTH;
+const LAYER_2_START: usize = LAYER_1_BUF2_START + LAYER_1_LENGTH;
 
 static TTF: &[u8] = include_bytes!("../../RobotoMono-Bold.ttf");
 
 pub struct Lcd {
-    controller: &'static mut Ltdc,
+    pub controller: &'static mut Ltdc,
     display_enable: OutputPin,
     backlight_enable: OutputPin,
     layer_1_in_use: bool,
@@ -52,6 +53,18 @@ impl Lcd {
         }
     }
 
+    pub fn layer_1_with_double_frame_buffer(&mut self) -> Option<DoubleBufferLayer<FramebufferArgb8888>> {
+        if self.layer_1_in_use {
+            None
+        } else {
+            Some(DoubleBufferLayer{
+                framebuffers: [FramebufferArgb8888::new(LAYER_1_START),
+                                FramebufferArgb8888::new(LAYER_1_BUF2_START),],
+                current_not_displayed: Buffers::SECOND,
+            })
+        }
+    }
+
     pub fn layer_2(&mut self) -> Option<Layer<FramebufferAl88>> {
         if self.layer_2_in_use {
             None
@@ -65,6 +78,8 @@ impl Lcd {
 
 pub trait Framebuffer {
     fn set_pixel(&mut self, x: usize, y: usize, color: Color);
+    fn get_base_addr(&self) -> usize;
+    fn get_pixel(&self, x: usize, y: usize) -> Color;
 }
 
 pub struct FramebufferArgb8888 {
@@ -82,6 +97,15 @@ impl Framebuffer for FramebufferArgb8888 {
         let pixel = y * WIDTH + x;
         let pixel_ptr = (self.base_addr + pixel * LAYER_1_OCTETS_PER_PIXEL) as *mut u32;
         unsafe { ptr::write_volatile(pixel_ptr, color.to_argb8888()) };
+    }
+    fn get_base_addr(&self) -> usize {
+        self.base_addr   
+    }
+
+    fn get_pixel(&self, x: usize, y: usize) -> Color {
+        let pixel = y * WIDTH + x;
+        let pixel_ptr = (self.base_addr + pixel * LAYER_1_OCTETS_PER_PIXEL) as *mut u32;
+        Color::from_argb8888(unsafe { ptr::read_volatile(pixel_ptr) })
     }
 }
 
@@ -101,6 +125,69 @@ impl Framebuffer for FramebufferAl88 {
         let pixel = y * WIDTH + x;
         let pixel_ptr = (self.base_addr + pixel * LAYER_2_OCTETS_PER_PIXEL) as *mut u16;
         unsafe { ptr::write_volatile(pixel_ptr, (color.alpha as u16) << 8 | 0xff) };
+    }
+    fn get_base_addr(&self) -> usize {
+        self.base_addr
+    }
+    fn get_pixel(&self, x: usize, y: usize) -> Color {
+        unimplemented!();
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+#[repr(u8)]
+pub enum Buffers {
+    FIRST = 0,
+    SECOND = 1,
+}
+
+pub struct DoubleBufferLayer<T> {
+    framebuffers: [T; 2],
+    pub current_not_displayed: Buffers,
+}
+
+impl<T: Framebuffer> DoubleBufferLayer<T> {
+    pub fn clear_all(&mut self) {
+        for i in 0..HEIGHT {
+            for j in 0..WIDTH {
+                self.framebuffers[Buffers::FIRST as usize].set_pixel(j, i, Color::from_argb8888(0));
+                self.framebuffers[Buffers::SECOND as usize].set_pixel(j, i, Color::from_argb8888(0));
+            }
+        }
+
+    }
+    pub fn clear(&mut self) {
+        for i in 0..HEIGHT {
+            for j in 0..WIDTH {
+                self.framebuffers[self.current_not_displayed as usize].set_pixel(j, i, Color::from_argb8888(0));
+            }
+        }
+    }
+    pub fn toggle_buffer(&mut self, lcd :&mut Lcd) {
+        match self.current_not_displayed {
+            Buffers::FIRST => {
+                self.current_not_displayed = Buffers::SECOND;
+                lcd.controller.l1cfbar.update(|r| r.set_cfbadd(LAYER_1_START as u32));
+            },
+            Buffers::SECOND => {
+                self.current_not_displayed = Buffers::FIRST;
+                lcd.controller.l1cfbar.update(|r| r.set_cfbadd(LAYER_1_BUF2_START as u32));
+            },
+        }
+        lcd.controller.srcr.update(|r| r.set_imr(true)); // IMMEDIATE_RELOAD
+    }
+    pub fn read_displayed_buffer(&self, x: usize, y: usize) -> Color {
+        self.framebuffers[1 - self.current_not_displayed as usize].get_pixel(x, y)
+    } 
+    pub fn print_point_at(&mut self, x: usize, y: usize) {
+        self.print_point_color_at(x, y, Color::from_hex(0xffffff));
+    }
+
+    pub fn print_point_color_at(&mut self, x: usize, y: usize, color: Color) {
+        assert!(x < WIDTH);
+        assert!(y < HEIGHT);
+
+        self.framebuffers[self.current_not_displayed as usize].set_pixel(x, y, color);
     }
 }
 
