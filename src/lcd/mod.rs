@@ -15,8 +15,8 @@ mod init;
 mod color;
 mod font;
 
-const HEIGHT: usize = 272;
-const WIDTH: usize = 480;
+pub const HEIGHT: usize = 272;
+pub const WIDTH: usize = 480;
 
 const LAYER_1_OCTETS_PER_PIXEL: usize = 4;
 const LAYER_1_LENGTH: usize = HEIGHT * WIDTH * LAYER_1_OCTETS_PER_PIXEL;
@@ -65,6 +65,17 @@ impl Lcd {
         }
     }
 
+    pub fn window_layer_1(&mut self) -> Option<WindowLayer> {
+        if self.layer_1_in_use {
+            None
+        } else {
+            Some(WindowLayer {
+                framebuffer: FramebufferArgb8888::new(LAYER_1_START),
+                position: 0,
+            })
+        }
+    }
+
     pub fn layer_2(&mut self) -> Option<Layer<FramebufferAl88>> {
         if self.layer_2_in_use {
             None
@@ -94,7 +105,7 @@ impl FramebufferArgb8888 {
 
 impl Framebuffer for FramebufferArgb8888 {
     fn set_pixel(&mut self, x: usize, y: usize, color: Color) {
-        let pixel = y * WIDTH + x;
+        let pixel = y * (WIDTH * 2) + x;
         let pixel_ptr = (self.base_addr + pixel * LAYER_1_OCTETS_PER_PIXEL) as *mut u32;
         unsafe { ptr::write_volatile(pixel_ptr, color.to_argb8888()) };
     }
@@ -103,7 +114,7 @@ impl Framebuffer for FramebufferArgb8888 {
     }
 
     fn get_pixel(&self, x: usize, y: usize) -> Color {
-        let pixel = y * WIDTH + x;
+        let pixel = y * (WIDTH*2) + x;
         let pixel_ptr = (self.base_addr + pixel * LAYER_1_OCTETS_PER_PIXEL) as *mut u32;
         Color::from_argb8888(unsafe { ptr::read_volatile(pixel_ptr) })
     }
@@ -188,6 +199,70 @@ impl<T: Framebuffer> DoubleBufferLayer<T> {
         assert!(y < HEIGHT);
 
         self.framebuffers[self.current_not_displayed as usize].set_pixel(x, y, color);
+    }
+}
+
+pub struct WindowLayer {
+    framebuffer: FramebufferArgb8888,
+    position: usize,
+}
+
+impl WindowLayer {
+    
+    pub fn new(framebuffer: FramebufferArgb8888, lcd: &mut Lcd) -> WindowLayer {
+        WindowLayer {
+            framebuffer: framebuffer,
+            position: 0,
+        }
+    }
+
+    pub fn get_position(&self) -> usize {
+        self.position
+    }
+    
+    pub fn next_frame(&mut self, lcd: &mut Lcd) {
+        if self.framebuffer.get_base_addr() == LAYER_1_START + (WIDTH - 1) * LAYER_1_OCTETS_PER_PIXEL {
+            self.framebuffer = FramebufferArgb8888::new(LAYER_1_START);
+            self.position = 0;
+        } else {
+            self.framebuffer = FramebufferArgb8888::new(self.framebuffer.get_base_addr() + LAYER_1_OCTETS_PER_PIXEL);
+            self.position += 1;
+        }
+        lcd.controller.l1cfbar.update(|r| r.set_cfbadd(self.framebuffer.get_base_addr() as u32));
+        lcd.controller.srcr.update(|r| r.set_imr(true));
+    }
+
+    pub fn print_point_at(&mut self, x: usize, y: usize) {
+        self.print_point_color_at(x, y, Color::from_hex(0xffffff));
+    }
+
+    pub fn clear_all(&mut self) {
+        hprintln!("Clear all");
+        for i in 0..HEIGHT * WIDTH * 2 {
+                let pixel_ptr = (LAYER_1_START + i * LAYER_1_OCTETS_PER_PIXEL) as *mut u32;
+                unsafe { ptr::write_volatile(pixel_ptr, 0) };
+        }
+    } 
+
+    pub fn clear(&mut self) {
+        let mut framebuffer = FramebufferArgb8888::new(LAYER_1_START + LAYER_1_LENGTH);
+        for i in 0..HEIGHT {
+            for j in 0..WIDTH {
+                framebuffer.set_pixel(j, i, Color::from_argb8888(0));
+            }
+        }
+    }
+    pub fn print_point_color_absoulte(&mut self, x: usize, y: usize, color: Color) {
+        assert!(x < WIDTH * 2);
+        assert!(y < HEIGHT);
+        let mut framebuffer = FramebufferArgb8888::new(LAYER_1_START);
+        framebuffer.set_pixel(x, y, color);
+    }
+    pub fn print_point_color_at(&mut self, x: usize, y: usize, color: Color) {
+        assert!(x < WIDTH);
+        assert!(y < HEIGHT);
+
+        self.framebuffer.set_pixel(x, y, color);
     }
 }
 

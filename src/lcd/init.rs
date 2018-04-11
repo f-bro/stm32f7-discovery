@@ -143,8 +143,10 @@ pub fn init(ltdc: &'static mut Ltdc, rcc: &mut Rcc, gpio: &mut Gpio) -> Lcd {
 
     // configure color frame buffer line length and pitch
     ltdc.l1cfblr.update(|r| {
-        r.set_cfbp(WIDTH * LAYER_1_OCTETS_PER_PIXEL); // pitch
-        r.set_cfbll(WIDTH * LAYER_1_OCTETS_PER_PIXEL + 3); // line_length
+        //r.set_cfbp(WIDTH * LAYER_1_OCTETS_PER_PIXEL); // pitch
+        //r.set_cfbll(WIDTH * LAYER_1_OCTETS_PER_PIXEL + 3); // line_length
+        r.set_cfbp((WIDTH * LAYER_1_OCTETS_PER_PIXEL * 2) as u16);
+        r.set_cfbll((WIDTH * LAYER_1_OCTETS_PER_PIXEL  + 3) as u16);
     });
     ltdc.l2cfblr.update(|r| {
         r.set_cfbp(WIDTH * LAYER_2_OCTETS_PER_PIXEL); // pitch
